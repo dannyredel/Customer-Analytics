@@ -9,12 +9,12 @@ Customer analytics means combining statistical models to predict customer behavi
 ### 2. Next-Period Response Model
 -   **RFM Analysis**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial2.html) \| [Assignment](https://preeminent-torte-37ddf4.netlify.app/assignment2.html) \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz2.html)
 -   **Logistic Regression**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial3.html) \| [Assignment](https://preeminent-torte-37ddf4.netlify.app/assignment3.html) \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz3.html)
--   **Subset Selection & LASSO**: [Tutorial](tutorial1.html) \| [Assignment](assignment1.html) \| [Quiz](quiz1.html)
--   **Decision Trees & Random Forests**: [Tutorial](tutorial1.html) \| [Assignment](assignment1.html) \| [Quiz](quiz1.html)
+-   **Subset Selection & LASSO**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial4_1.html) \| [Assignment](https://preeminent-torte-37ddf4.netlify.app/assignment4.html) \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz4.html)
+-   **Decision Trees & Random Forests**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial4_2.html) \| [Assignment](https://preeminent-torte-37ddf4.netlify.app/assignment4.html) \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz4.html)
 
 ### 3. Collaborative Filtering
--   **Collaborative Filtering**: [Tutorial](tutorial1.html) \| [Assignment](assignment1.html) \| [Quiz](quiz1.html)
+-   **Collaborative Filtering**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial5.html) \| Assignment \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz1.html)
 
 ### 4. Customer Lifetime Value
--   **Contractual settings (sBG)**: [Tutorial](tutorial1.html) \| [Assignment](assignment1.html) \| [Quiz](quiz1.html)
--   **Non-contractual settings (BG/BB)**: [Tutorial](tutorial1.html) \| [Assignment](assignment1.html) \| [Quiz](quiz1.html)
+-   **Contractual settings (sBG)**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial6.html) \| [Assignment](https://preeminent-torte-37ddf4.netlify.app/assignment6.html) \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz6.html)
+-   **Non-contractual settings (BG/BB)**: [Tutorial](https://preeminent-torte-37ddf4.netlify.app/tutorial7.html) \| [Assignment](https://preeminent-torte-37ddf4.netlify.app/assignment7.html) \| [Quiz](https://preeminent-torte-37ddf4.netlify.app/quiz7.html)
