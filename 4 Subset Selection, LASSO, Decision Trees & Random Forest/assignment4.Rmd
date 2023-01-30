@@ -1,0 +1,440 @@
+---
+title: 'Assignment 4: Subset Selection, LASSO & Trees'
+author: "Daniel Redel"
+date: "2022-11-19"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+library(tree)
+library(dplyr)
+library(janitor)
+library(car)
+library(pROC)
+library(ranger)
+library(glmnet)
+
+options("scipen"=200, "digits"=3)
+```
+
+**Data Import**:
+
+```{r}
+bank <- read.csv('bank.csv', stringsAsFactors = TRUE)
+bank <- bank[-c(1:3)]
+n <- nrow(bank)
+
+set.seed(19103)
+sample <- sample(c(TRUE, FALSE), n, replace=TRUE, prob=c(0.7, 0.3))
+bank.train <- bank[sample, ]
+bank.holdout <- bank[!sample, ]
+```
+
+A bank wants to implement a proactive churn policy. They assemble a data set of past customers who either churned or stayed (were retained) along with several variables that can be used to predict this decision. This data set is called bank.csv. The churn variable is called Exited (1 churn, 0 not churn).
+
+## Question 1: What variable enters last in Forward Selection?
+
+Use *forward selection* starting from an intercept-only model adding explanatory variables until the AIC minimum is reached or all 10 variables are added. **What variable enters last?**
+
+Full Model, but without interaction terms (10 variables in total):
+
+```{r}
+full <- glm(Exited ~ ., data=bank.train, family = "binomial")
+
+summary(full)
+```
+
+```{r}
+# intercept only
+null <- glm(Exited ~ 1, data=bank.train, family = "binomial")
+
+start_time <- Sys.time()
+fwd.model=step(null, direction = 'forward', scope=formula(full), keep = function(model, aic) list(model = model, aic = aic))
+end_time<-Sys.time()
+t=end_time-start_time
+```
+
+Here is the table showing the variables added per step.
+
+```{r}
+fwd.model$anova
+```
+
+## Question 2: How many variables (excluding the intercept) are in the final model?
+
+Note not all coefficients were added.
+
+```{r, echo=FALSE}
+cat("Forward Selection Model: ", length(fwd.model$coefficients)-1, " ")
+
+cat("Full Model: ",length(full$coefficients)-1)
+```
+
+## Question 3: How many variables (excluding the intercept) are in this model?
+
+Use the **holdout data** set to choose the right size model from the forward selection procedure. Choose the model with the largest [*Out Of Sample R2*]{.underline}.
+
+**How many variables (excluding the intercept) are in this model?**
+
+```{r, cache=TRUE}
+set.seed(19103)
+M <- dim(fwd.model$keep)[2]
+
+OOS=data.frame(R2=rep(NA,M), rank=rep(NA, M))
+
+
+## pred must be probabilities (0<pred<1) for binomial
+deviance <- function(y, pred, family=c("gaussian","binomial")){
+    family <- match.arg(family)
+    if(family=="gaussian"){
+      return( sum( (y-pred)^2 ) )
+    }else{
+      if(is.factor(y)) y <- as.numeric(y)>1
+      return( -2*sum( y*log(pred) + (1-y)*log(1-pred) ) )
+    }
+  }
+
+## get null devaince too, and return R2
+  R2 <- function(y, pred, family=c("gaussian","binomial")){
+  fam <- match.arg(family)
+  if(fam=="binomial"){
+    if(is.factor(y)){ y <- as.numeric(y)>1 }
+  }
+  dev <- deviance(y, pred, family=fam)
+  dev0 <- deviance(y, mean(y), family=fam)
+  return(1-dev/dev0)
+  }  
+
+for(k in 1:M){
+
+pred = predict(fwd.model$keep[["model",k]], newdata=bank.holdout, type = "response")
+
+OOS$R2[k]<-R2(y = bank.holdout$Exited,pred=pred, family="binomial")
+OOS$rank[k]<-fwd.model$keep[["model",k]]$rank
+  
+  
+}
+ax=c(1:max(OOS$rank))
+par(mai=c(.9,.8,.2,.2))
+plot(x=OOS$rank, y = OOS$R2, type="b", ylab=expression(paste("Out-of-Sample R"^"2")), xlab="# of model parameters estimated (rank)", xaxt="n")
+axis(1, at=ax, labels=ax)
+
+max.idx <- which.max(OOS$R2)
+
+# OOS$rank[max.idx]
+cat("Cross Validation Model: ",OOS$rank[max.idx]-1, "coefficients")
+
+
+```
+
+```{r}
+ax=c(1:max(OOS$rank))
+par(mai=c(.9,.8,.2,.2))
+plot(x=OOS$rank, y = OOS$R2, type="b", ylab=expression(paste("Out-of-Sample R"^"2")), xlab="# of model parameters estimated (rank)", xaxt="n")
+axis(1, at=ax, labels=ax)
+abline(v=OOS$rank[max.idx], lty=3)
+```
+
+```{r}
+model <- fwd.model$keep[["model",max.idx]]
+```
+
+```{r}
+model_full_data<-glm(model$formula, data = bank, family = binomial(link = "logit"))
+
+summary(model_full_data) ## 10-2 = 8 Variables
+```
+
+## Question 4: First non-zero coefficient variable in LASSO?
+
+Run LASSO on the training data.
+
+```{r}
+# all the factor variables
+xfactors<- model.matrix(Exited ~ Geography + Gender + HasCrCard + IsActiveMember , data = bank.train)
+
+# remove intercept
+xfactors<-xfactors[,-1]
+
+# all continuous variables
+x<-as.matrix(data.frame(bank.train$CreditScore, bank.train$Age, bank.train$Tenure, bank.train$Balance, bank.train$NumOfProducts, bank.train$EstimatedSalary, xfactors))                        
+```
+
+```{r}
+lasso_bank <- glmnet(x, y=as.factor(bank.train$Exited), alpha = 1, family = "binomial", nlambda = 100)
+```
+
+```{r}
+par(mai=c(.9,.8,.8,.8))
+par(mfrow=c(1,1))
+plot(lasso_bank, xvar="lambda", label = TRUE, )
+```
+
+**What is the first variable that has a non-zero coefficient as the penalty weight is gradually decreased?**
+
+```{r}
+dimnames(x)[2] # Age
+
+```
+
+```{r, echo=FALSE}
+cat("First non-zero coefficient variable: ", dimnames(x)[2][[1]][2], " or Age")
+```
+
+## Question 5: Number of non-zero coefficients in Model
+
+Use cross-validation to tune the penalty weight.
+
+```{r}
+set.seed(19103)
+lasso_cv <- cv.glmnet(x, y=bank.train$Exited, family = "binomial", type.measure = "deviance")
+plot(lasso_cv)
+```
+
+**How many non-zero coefficients (excluding the intercept) are there in this model?**
+
+```{r, echo=FALSE}
+#coef(lasso_cv, s = "lambda.min")
+cat("Number of non-zero Coefficients: ", lasso_cv$nzero[54])
+```
+
+## Question 6: What's the OOS R2 for the LASSO model?
+
+What's the OOS R2 for the LASSO model?
+
+*Provide your answer with two decimals separated by a dot, not a comma (e.g. 0.12).*
+
+`cv.glmnet()` does k-fold cross-validation for glmnet. Default is nfolds = 10.
+
+```{r, echo=FALSE}
+cat("OOS R-Squared: ", lasso_cv$glmnet.fit$dev.ratio[54])
+```
+
+Alt: We start by transforming the holdout:
+
+```{r}
+# all the factor variables
+xfactors<- model.matrix(Exited ~ Geography + Gender + HasCrCard + IsActiveMember , data = bank.holdout)
+
+# remove intercept
+xfactors<-xfactors[,-1]
+
+# all continuous variables
+x<-as.matrix(data.frame(bank.holdout$CreditScore, bank.holdout$Age, bank.holdout$Tenure, bank.holdout$Balance, bank.holdout$NumOfProducts, bank.holdout$EstimatedSalary, xfactors))                        
+```
+
+Now we predict:
+
+```{r}
+pred <- predict(lasso_cv, newx=x,  s = "lambda.min", type = "response")
+R2(y = bank.holdout$Exited,pred=pred,family="binomial")
+```
+
+Hardcore
+
+```{r, cache=TRUE}
+
+set.seed(19103)
+n = nrow(bank.train)
+K = 10 # # folds
+foldid = rep(1:K, each=ceiling(n/K))[sample(1:n)]
+
+OOS=data.frame(R2=rep(NA,K), rank=rep(NA, K))
+
+
+## pred must be probabilities (0<pred<1) for binomial
+deviance <- function(y, pred, family=c("gaussian","binomial")){
+    family <- match.arg(family)
+    if(family=="gaussian"){
+      return( sum( (y-pred)^2 ) )
+    }else{
+      if(is.factor(y)) y <- as.numeric(y)>1
+      return( -2*sum( y*log(pred) + (1-y)*log(1-pred) ) )
+    }
+  }
+
+## get null devaince too, and return R2
+  R2 <- function(y, pred, family=c("gaussian","binomial")){
+  fam <- match.arg(family)
+  if(fam=="binomial"){
+    if(is.factor(y)){ y <- as.numeric(y)>1 }
+  }
+  dev <- deviance(y, pred, family=fam)
+  dev0 <- deviance(y, mean(y), family=fam)
+  return(1-dev/dev0)
+  }  
+
+for(k in 1:K){
+  
+  train = which(foldid!=k) 
+  
+  # train.data conversion
+  btrain <- bank.train[train,]
+  xfactors<- model.matrix(Exited ~ Geography + Gender + HasCrCard + IsActiveMember, data = btrain)
+  xfactors<-xfactors[,-1]
+  x <- as.matrix(data.frame(btrain$CreditScore, btrain$Age, btrain$Tenure, btrain$Balance, btrain$NumOfProducts, btrain$EstimatedSalary, xfactors))  
+  
+   # test.data conversion
+  btest <- bank.train[-train,]
+  xfactors<- model.matrix(Exited ~ Geography + Gender + HasCrCard + IsActiveMember, data = btest)
+  xfactors<-xfactors[,-1]
+  xx <- as.matrix(data.frame(btest$CreditScore, btest$Age, btest$Tenure, btest$Balance, btest$NumOfProducts, btest$EstimatedSalary, xfactors))  
+  
+  #fit regression
+  glmnet(x, y=as.factor(btrain$Exited), alpha = 1, family = "binomial", nlambda = 100)
+  
+  #predict
+  pred <- predict(lasso_cv, newx=xx,  s = "lambda.min", type = "response")
+  
+  #R2
+  OOS$R2[k] <- R2(y = btest$Exited,pred=pred,family="binomial")
+
+    # print progress
+  cat(k, "  ")
+  
+}
+  
+round(mean(OOS$R2),2)
+  boxplot(OOS[1], data=OOS, main=expression(paste("Out-of-Sample R"^"2")),
+        xlab="Model", ylab=expression(paste("R"^"2")))
+```
+
+## Question 7: How many terminal nodes does the tree have?
+
+Fit a decision tree to the training data with mindev = 0.01.
+
+**How many terminal nodes does the tree have?**
+
+```{r}
+tree <- tree(as.factor(Exited) ~ ., data=bank.train, mindev=0.01)
+summary(tree) # 7
+```
+
+```{r}
+par(mfrow=c(1,1))
+plot(tree, col=8, lwd=2)
+# cex controls the size of the type, 1 is the default.  
+# label="yprob" gives the probability
+text(tree, label = "yprob", cex=.75, font=2, digits = 2, pretty=0)
+```
+
+## Question 8: Predict Probability
+
+What's the probability that a 55-year-old German female with 2 products, a 650 credit score, a tenure of 2, a balance of 80.000, a 100.000 salary, no card, not an active member exits?
+
+*Provide your answer with two decimals separated by a dot, not a comma (e.g. 0.12).*
+
+```{r}
+example <- as.data.frame(cbind(CreditScore = 650, 
+                               Geography = "Germany", 
+                               Gender = "Female", 
+                               Age = 55, 
+                               Tenure = 2, 
+                               Balance = 80000, 
+                               NumOfProducts = 2,
+                               IsActiveMember = 0, 
+                               HasCrCard = 0, 
+                               EstimatedSalary = 100000, 
+                               Exited = 1))
+example1 <- example %>% 
+  mutate(CreditScore = as.integer(CreditScore), 
+         Geography = as.factor(Geography), 
+         Gender = as.factor(Gender), 
+         Age = as.integer(Age), 
+         Tenure = as.integer(Tenure), 
+         Balance = as.double(Balance), 
+         NumOfProducts = as.integer(NumOfProducts),
+         IsActiveMember = as.integer(IsActiveMember), 
+         HasCrCard = as.integer(HasCrCard), 
+         EstimatedSalary = as.double(EstimatedSalary), 
+         Exited = as.integer(Exited))
+
+#lets make a prediction for our data. It will create two columns, one with probability for response and no response.
+pred_tree <- predict(tree, example1, type = "vector")
+
+```
+
+```{r, echo=FALSE}
+cat("Predicted probability of", round(head(pred_tree),2)[2], "to Exited==1")
+```
+
+## Question 9: How many terminal nodes does the lowest CV error tree have?
+
+Fit a decision tree with mindev = 0.0001. Use 5 fold cross-validation to prune the tree.
+
+```{r}
+set.seed(19103)
+tree_complex <- tree(as.factor(Exited) ~ . , data=bank.train, mindev=0.0001)
+summary(tree_complex)
+
+## It can be either 7 or 10 depending on whether we define mincut=100 or not
+
+```
+
+```{r}
+par(mfrow=c(1,1))
+par(mai=c(.8,.8,.2,.2))
+plot(tree_complex, col=10, lwd=2)
+text(tree_complex, cex=.5, label="yprob", font=2, digits = 2, pretty = 0)
+title(main="Classification Tree: complex")
+```
+
+The Model:
+
+```{r}
+set.seed(19103)
+cv.tree_complex <- cv.tree(tree_complex, K=5)
+
+#cv.tree_complex <- cv.tree(tree_complex, K=5, FUN = prune.misclass)
+
+```
+
+**How many terminal nodes does the lowest CV error tree have?**
+
+```{r}
+par(mfrow=c(1,1))
+plot(cv.tree_complex$size, cv.tree_complex$dev, xlab="tree size (complexity)", ylab="Out-of-sample deviance (error)", pch=20) # 7 or 10 Size
+```
+
+```{r}
+par(mfrow=c(1,2), oma = c(0, 0, 2, 0))
+tree_cut <- prune.tree(tree_complex, best=10)
+plot(tree_cut, col=10, lwd=2)
+text(tree_cut, cex=1, label="yprob", font=2, digits = 2, pretty = 0)
+title(main="A pruned tree")
+```
+
+Some Statistic Summary of Pruned Tree:
+
+```{r}
+tree_cut <- prune.tree(tree_complex, best=10) 
+summary(tree_cut)
+```
+
+## Question 10: What is the second most important variable in the random forest?
+
+Use a random forest on the training set with 1000 trees, a minimum node size of 25, importance impurity, probability true, and seed 19103.
+
+```{r}
+set.seed(19103)
+bank_rf <- ranger(Exited ~ ., data=bank.train, write.forest=TRUE, num.trees = 1000, min.node.size = 25, importance = "impurity", probability=TRUE, seed = 19103)
+```
+
+```{r}
+par(mfrow=c(1,1))
+par(mai=c(.9,.8,.2,.2))
+sort(bank_rf$variable.importance, decreasing = TRUE)
+barplot(sort(bank_rf$variable.importance, decreasing = TRUE), ylab = "variable importance")
+```
+
+**What is the SECOND most important variable in the random forest?**
+
+```{r}
+sort(bank_rf$variable.importance, decreasing = TRUE)[2]
+```

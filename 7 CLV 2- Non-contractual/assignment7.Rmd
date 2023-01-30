@@ -1,0 +1,211 @@
+---
+title: "Assignment 7: CLV - Non-contractual settings"
+author: "Daniel Redel"
+date: "2023-01-26"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen"=100, "digits"=3, width = 300)
+rm(list=ls())
+library(readr)
+library("BTYD")
+```
+
+A cruise-ship company characterizes customer behavior in terms of whether or not each customer went on a cruise in 2000, 2001, 2002, etc. This data is from Berger et al. (2003).  There were 6,094 customers who made their first cruise in year 0.  We follow their repeat cruises for the following 4 years: we record simply whether in a given year a customer went on a repeat cruise or not. 
+
+There's not enough data to do a proper holdout sample, so everything will be used in the estimation sample.
+
+```{r}
+cal.rf.matrix <- read.csv("rf_cruise.csv", sep = ";")
+trans<-read.csv("annual_cruises.csv")
+```
+
+# Question 1
+
+It's instructive to see how the data used to estimate the model were calculated from the original data set. 
+
+Go to the original paper and look at Figure 1 and the accompanying text.  Ignore t, the number of trips; focus on the "p" and "no" numbers.  Verify that the number of "4 for 4" customers in the flow chart is the same as in cal.rf.matrix. 
+
+**What are the distinct paths (e.g., 0100 means no cruise in year 1, cruise in year 2, no cruise in year 3, etc) in the diagram that comprises the (x=2, t_x=4, n=4) cell in cal.rf.Matrix?**
+
+*Give them in terms of 4 binary digits (0000 means no repeat cruises in any of the four years)*
+
+```{r}
+trans <- trans$x
+tt <- seq(0, length(trans)-1, by=1)
+par(mfrow=c(1,1))
+par(mai=c(.8,.8,.2,.2))
+plot(tt,trans, type="b", ylab="Total number of cruises", xlab="Year since first cruise", main="", xaxt='n', ylim = c(0,7000))
+```
+
+# Question 2
+
+**Estimate the BG/BB parameters, using (1,1,1,1) as starting parameters.**  
+
+*Provide your answer with two decimals separated by a dot, not a comma (e.g. 0.12).*
+
+**Initial Parameters**:
+
+```{r}
+par.start <- c(1, 1, 1, 1)
+rf.matrix <- cal.rf.matrix
+
+```
+
+**BGBB Estimation**:
+
+```{r}
+params <- bgbb.EstimateParameters(rf.matrix, par.start)
+round(params,2) # alpha, beta, gamma, delta
+```
+
+[**Log-Likelihood**]{.underline}:
+
+```{r}
+LL <- bgbb.rf.matrix.LL(params, rf.matrix)
+LL
+```
+
+# Question 3
+
+**What happens if you restrict the max parameter value to be 100?  You can do this by using the option max.param.value = .  What are the parameter values?**
+
+*Provide your answer with two decimals separated by a dot, not a comma (e.g. 0.12).*
+
+```{r}
+params <- bgbb.EstimateParameters(rf.matrix, par.start, max.param.value = 100)
+round(params, 2)
+```
+
+# Question 4
+
+**Does the log likelihood rounded to a whole number change using estimates from Q2 and Q3?**
+
+**Likelihood**:
+
+```{r}
+LL <- bgbb.rf.matrix.LL(params, rf.matrix)
+LL # didn't change
+```
+
+# Question 5
+
+**Graph out the distributions of the transaction rate and dropout rate for both sets of estimates from Q2 and Q3. In both cases, which distribution varies the least in the population?**
+
+[*Transaction Rate, while alive*]{.underline}:
+
+```{r}
+temp <- bgbb.PlotTransactionRateHeterogeneity(params)
+```
+
+[*Drop Out Rate*]{.underline}:
+
+```{r}
+temp <- bgbb.PlotDropoutRateHeterogeneity(params)
+```
+
+[**Mean of Rates**]{.underline}:
+
+```{r}
+par(mfrow=c(1,2))
+par(mai=c(.8,.8,.5,.2))
+temp<-bgbb.PlotTransactionRateHeterogeneity(params)
+par(mai=c(.8,.8,.5,.2))
+temp<-bgbb.PlotDropoutRateHeterogeneity(params)
+
+```
+
+```{r, echo=FALSE}
+cat("avg trans rate =",round(params[1]/(sum(params[1:2])),2), "\n")
+
+cat("avg dropout rate =",round(params[3]/(sum(params[3:4])),2), "\n")
+```
+
+# Question 6
+
+**In the 4^th^ year after the first purchase, how many actual repeat cruises were there, and how many are predicted by the BGBB model (using Q2 estimates)?**
+
+*Provide your answer with zero decimals (e.g. 120 or -120).*
+
+```{r}
+# trans[2:5] -> # of users who repeat cruises between period 1 and 4
+
+pred <- bgbb.PlotTrackingInc(params, rf.matrix, trans[2:5], xticklab = seq(1,4))
+pred
+```
+
+```{r, echo=FALSE}
+cat("predicted =",round(pred[2,4]), "\n")
+cat("actual =",round(pred[1,4]), "\n")
+```
+
+# Question 7
+
+**According to the model, what is the predicted number of cruises in the next 4 years for someone who took a cruise every year so far (using Q2 estimates)?**
+
+*Provide your answer with two decimals separated by a dot, not a comma (e.g. 0.12).*
+
+[**Individual-Level Prediction**]{.underline}:
+
+```{r}
+comp <- bgbb.HeatmapHoldoutExpectedTrans(params, n.cal=4, n.star=4)
+comp
+```
+
+Someone who took a cruise every year (F=4) so far (R=4, period of last purchase)
+
+```{r}
+round(comp[5,5],2)
+```
+
+# Question 8
+
+**What is the RLV for someone who has taken a cruise every year so far (F=R=4), assuming each cruise yields on average \$600 in profit, and the discount rate is 0.1 (using Q3 estimates)?**
+
+*Provide your answer with zero decimals, without the dollar sign (e.g. 120 or -120[**).**]{.underline}*
+
+[**First, we need CLV**]{.underline}:
+
+```{r}
+m <- 600
+
+BGBBCLV<-function(params,m,d,T) {
+params<-unname(params)
+al<-params[1]
+be<-params[2]
+ga<-params[3]
+de<-params[4]
+DET<-1   # at time zero there has to be a purchase
+for (i in 1:T) {
+    DET<-DET+(al/(al+be))*(beta(ga,de+i)/beta(ga,de))*1/(1+d)^{i}
+}
+CLV=m*DET  # convert discount expected purchases into expected value
+return(CLV)    #return the CLV
+}
+```
+
+```{r}
+CLV <- BGBBCLV(params = params, m=600,d=.1,T=200)
+CLV
+```
+
+[**Now we can get RLV**]{.underline}:
+
+```{r}
+m <- 600
+DERT <- bgbb.rf.matrix.DERT(params, rf.matrix = cal.rf.matrix, d=0.1)
+RLV <- m*DERT
+
+RLVmatrix <- cbind(cal.rf.matrix,round(RLV)) 
+RLVmatrix
+```
+
+```{r, echo=FALSE}
+cat("Q6 RLV for 4 for 4 = $", RLVmatrix[1,"round(RLV)"], "\n")
+```

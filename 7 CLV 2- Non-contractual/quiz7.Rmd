@@ -1,0 +1,236 @@
+---
+title: "Quiz 7: CLV - Non-contractual settings"
+author: "Daniel Redel"
+date: "2023-01-26"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen"=100, "digits"=3, width = 300)
+rm(list=ls())
+library(readr)
+library("BTYD")
+```
+
+In this assignment, we will use a different data set with 10000 customers and [*13 periods total*]{.underline}. We estimate the model on the **first 7 (calibration)** and test it on the **final 6 periods (holdout)**.  
+
+```{r}
+cal.rf.matrix <- read.csv("cal.rf.matrix.csv")
+trans <- read.csv("annual_transactions.csv")
+holdout <- read.csv("holdout.trans.rf.matrix.csv")
+```
+
+# Question 1
+
+Create a graph of aggregate transactions per year. **What are the total number of purchases in year 8 after the first purchase?**
+
+*Provide your answer without any decimals (e.g. 12)*
+
+```{r}
+trans <- trans$x
+
+par(mfrow=c(1,1))
+par(mai=c(.8,.8,.2,.2))
+plot(seq(1,13,1),trans, type="b", ylab="Total number of repeat transactions", xlab="Year since first purchase", main="", xaxt='n')
+axis(1, at = seq(0, 13, by = 1))
+abline(v=7.5,col = "red", lwd = 2)
+text(x = 6,y = 4500,"Calibration", cex=1, pos=3, col="black", font = 2)
+text(x = 9,y = 4500,"Validation", cex=1, pos=3, col="black", font = 2)
+
+```
+
+# Question 2
+
+Estimate the BG/BB parameters using the calibration data, the first seven years. **What are the parameters?**
+
+*Provide your answers with a dot and two decimals (e.g. 0.12)*
+
+**Initial Parameters**:
+
+```{r}
+rf.matrix <- cal.rf.matrix
+par.start <- c(1, 1, 1, 1)
+
+```
+
+**MLE Estimation**:
+
+```{r}
+params <- bgbb.EstimateParameters(rf.matrix, par.start)
+round(params, 2)
+```
+
+```{r}
+## Check log-likelihood of the params:
+LL <- bgbb.rf.matrix.LL(params, rf.matrix)
+LL
+```
+
+# Question 3
+
+Graph out the distributions of the transaction rate and dropout rate. **What are the average values of each in the population?**
+
+*Provide your answer with a dot and two decimals (e.g. 0.12)*
+
+[**Average transaction rate**]{.underline}:
+
+```{r}
+round(params[1]/(params[1]+params[2]),2)
+bgbb.PlotTransactionRateHeterogeneity(params)
+```
+
+[**Average dropout rate**]{.underline}:
+
+```{r}
+round(params[3]/(params[3]+params[4]),2)
+bgbb.PlotDropoutRateHeterogeneity(params)
+```
+
+# Question 4
+
+Graph out the actual and predicted transactions per year. **What is the expected level of transactions in year 8 after the first purchase?**
+
+*Provide your answer with zero decimals (e.g. 12)*
+
+[**Aggregate Forecasting**]{.underline}:
+
+```{r}
+pred <- bgbb.PlotTrackingInc(params, rf.matrix, trans)
+
+```
+
+```{r, echo=FALSE}
+cat("Q4 =",round(pred[2,8]), "\n")
+```
+
+# Question 5
+
+According to the model, **what is the predicted number of transactions in the holdout for a customer who was "7 for 7" in the calibration period?  What is the actual number of holdout transactions for these customers?**
+
+*Provide your answer with a dot and two decimals (e.g. 0.12)*
+
+[**Predicted**]{.underline}:
+
+```{r}
+bgbb.HeatmapHoldoutExpectedTrans(params, n.cal = 7, n.star = 6)
+```
+
+[**Actual**]{.underline}:
+
+```{r}
+cbind(cal.rf.matrix, holdout)
+
+# take total transactions for last row divided by customers:
+
+act <- holdout$x[29]/cal.rf.matrix[29,4] #ind=29 has 7 of 7, the last obs.
+
+```
+
+```{r, echo=FALSE}
+cat("Actual =",round(act,2), "\n")
+```
+
+# Question 6
+
+**What is the CLV**, assuming each transaction yields on average 50 in profit and the discount rate is 0.1? You can use 200 periods for the sum.
+
+*Provide your answer with zero decimals (e.g. 12)*
+
+```{r}
+BGBBCLV<-function(params,m,d,T) {
+params<-unname(params)
+al<-params[1]
+be<-params[2]
+ga<-params[3]
+de<-params[4]
+DET<-1   # at time zero there has to be a purchase
+for (i in 1:T) {
+    DET<-DET+(al/(al+be))*(beta(ga,de+i)/beta(ga,de))*1/(1+d)^{i}
+}
+CLV=m*DET  # convert discount expected purchases into expected value
+return(CLV)    #return the CLV
+}
+```
+
+[**CLV**]{.underline}:
+
+```{r}
+CLV <- BGBBCLV(params = params, m=50,d=.1,T=200)
+CLV
+```
+
+# Question 7
+
+**What is the RLV for a 7 for 7 customer?** Again, assume each transaction yields on average 50 in profit, and the discount rate is 0.1.  
+
+*Provide your answer with zero decimals (e.g. 12)*
+
+```{r}
+m <- 50
+DERT <- bgbb.rf.matrix.DERT(params, rf.matrix = cal.rf.matrix, d=0.1)
+RLV <- m*DERT
+
+RLVmatrix <- cbind(cal.rf.matrix,round(RLV)) 
+RLVmatrix
+```
+
+[**RLV**]{.underline}:
+
+```{r}
+max(RLV)
+```
+
+# Question 8
+
+Consider a charity with just one opportunity for people to donate per year. Consider a donor has donated 3 times in the past five years with the last donation occurring in year 4. In the context of the BG/BB model, what are the donor's sufficient statistics: n, t_x, and x
+
+n=5\
+t_x = 4\
+x = 3
+
+Assume that = 0.6 and *Θ* = 0.2.
+
+**What is the likelihood of this customer's donations?**
+
+*Provide your answer with a dot and three decimals (e.g. 0.123)*
+
+```{r}
+n <- 5
+t_x <- 4
+x <- 3
+
+p <- 0.6
+theta <- 0.2
+```
+
+$$
+L(p,\theta|x, t_x,n)=p^x(1-p)^{n-x}(1-\theta)^n
++\sum^{n-t_x-1}_{j=0}p^x(1-p)^{t_x-x+j}\theta(1-\theta)^{t_x+j}
+$$
+
+```{r}
+a <- (p^3)*(1-p)*((1-theta)^4)*theta
+b <- (p^3)*(1-p)^2*((1-theta)^5) ## the last obs. does not have theta
+
+likelihood <- a+b
+round(likelihood,3)
+```
+
+# Question 9
+
+**What is the probability that the customer is alive at the end?**
+
+*Provide your answer with a dot and three decimals (e.g. 0.123)*
+
+$$
+\Pr(\text{alive at }n|x,t_x,n)=\frac{p^x(1-p)^{n-x}(1-\theta)^n}{L(p,\theta|x,t_x,n)}
+$$
+
+```{r}
+(p^3)*((1-p)^2)*((1-theta)^5)/likelihood
+```

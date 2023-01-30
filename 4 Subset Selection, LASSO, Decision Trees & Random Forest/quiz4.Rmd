@@ -1,0 +1,305 @@
+---
+title: "Quiz 4: Subset Selection, LASSO & Trees"
+author: "Daniel Redel"
+date: "2023-01-25"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+library(tree)
+library(dplyr)
+library(janitor)
+library(car)
+library(pROC)
+library(ranger)
+library(glmnet)
+library(readr)
+library(kableExtra)
+
+options("scipen"=200, "digits"=3)
+```
+
+# Question 1
+
+Let's use a decision tree to predict churn. Use the data set [telco_test.csv](https://tilburguniversity.instructure.com/courses/10919/files/1948965?wrap=1). Make sure all the string variables are loaded as factors by using the following statement:
+
+```{r, warning=FALSE, message=FALSE}
+telco <- read.csv('telco_test.csv', stringsAsFactors = TRUE)
+
+# Churn as dummy
+Churn.num <- as.numeric(as.factor(telco$Churn))-1
+rbar <- mean(Churn.num)
+```
+
+Fit a tree that stops growing when the child branch has below 50 observations or when the deviance improves by less than 0.001.
+
+**What variables are used in this tree? Check all that apply.**
+
+```{r, warning=FALSE}
+tree <- tree(as.factor(Churn) ~., data = telco, mindev=0.001, mincut=50)
+summary(tree)
+```
+
+```{r}
+par(mfrow=c(1,1))
+plot(tree, col=8, lwd=2)
+text(tree, label = "yprob", cex=.75, font=2, digits = 2, pretty=0)
+```
+
+# Question 2
+
+According to this model, what is the probability that a female senior citizen, with no partners, no dependents, who has been a customer for 12 months, with phone service, without multiple lines, with DSL, no online security, no online backup, no device protection, with tech support and streaming TV, without streaming movies, on a one year contract, no paperless billing, pays by mailed check, with monthly charges of 30 and total charges of 1000, churns?
+
+*Provide your answer with a dot and two decimals (e.g. 0.12)*
+
+```{r}
+newdata1 <- data.frame(gender = as.factor(2), SeniorCitizen=1, 
+                       Partner=as.factor(1), Dependents=as.factor(1), 
+                       tenure=12,PhoneService=as.factor(2),
+                       MultipleLines=as.factor(1), InternetService=as.factor(2), 
+                       OnlineSecurity=as.factor(1), OnlineBackup=as.factor(1),
+                       DeviceProtection=as.factor(1), TechSupport=as.factor(2), 
+                       StreamingTV=as.factor(2), StreamingMovies=as.factor(1), 
+                       Contract=as.factor(levels(telco$Contract))[2], 
+                       PaperlessBilling=as.factor(1), PaymentMethod=as.factor(1), 
+                       MonthlyCharges=30, TotalCharges=10)
+```
+
+Now we can predict:
+
+```{r}
+pred_tree <- predict(tree, newdata = newdata1, type="vector")
+round(pred_tree[2],2)
+```
+
+# Question 3
+
+**What's the percent of correctly predicted churners, the true positive rate, using a threshold of 0.5 to classify predictions?**
+
+*Provide your answer without a percent sign and with zero decimals (e.g. 12)*
+
+We predict again, but now using all the data:
+
+```{r}
+pred_tree <- predict(tree, newdata = telco, type="vector")
+```
+
+```{r}
+prob_resp <- pred_tree[,2]
+sum(prob_resp>0.5) # but there is no above 0.5
+
+
+confusion_matrix <- (table(telco$Churn, prob_resp > 0.5))
+confusion_matrix <- as.data.frame.matrix(confusion_matrix)
+
+colnames(confusion_matrix) <- c("No", "Yes")
+
+confusion_matrix$Percentage_Correct <- confusion_matrix[1,]$No/(confusion_matrix[1,]$No+confusion_matrix[1,]$Yes)*100
+confusion_matrix[2,]$Percentage_Correct <- confusion_matrix[2,]$Yes/(confusion_matrix[2,]$No+confusion_matrix[2,]$Yes)*100
+
+```
+
+```{r}
+print(confusion_matrix)
+```
+
+```{r, echo=FALSE}
+cat('Hit Rate:', (confusion_matrix[2,2]/(confusion_matrix[2,1]+confusion_matrix[2,2]))*100)
+```
+
+# Question 4
+
+We're now going to use 10-fold cross-validation to prune the tree. Start with the most complex tree by setting mindev and mincut to 0. Use 10 fold cross-validation to find the smallest tree that has the lowest deviance rounded to the first whole number.  
+
+**How many leaves (terminal nodes) are in this tree?**
+
+We start with the complex tree:
+
+```{r}
+tree_complex <- tree(as.factor(Churn) ~., data = telco, mindev=0, mincut=0)
+```
+
+we now can do the cross-validation `K=10:`
+
+```{r}
+cv.tree.complex <- cv.tree(tree_complex, K=10)
+```
+
+How many leaves?
+
+```{r}
+par(mfrow=c(1,1))
+plot(cv.tree.complex$size, cv.tree.complex$dev, xlab="tree size (complexity)", ylab="Out-of-sample deviance (error)", pch=20)
+
+```
+
+# Question 5
+
+According to this pruned model, **what's the probability of someone with a one-year contract, who has been a customer for 12 months, and has no internet service, churns?**
+
+*Provide your answer with a dot and three decimals (e.g. 0.123)*
+
+We choose our best model with 6 leaves:
+
+```{r}
+tree_cut <- prune.tree(tree_complex, best=6)
+summary(tree_cut)
+```
+
+We can predict now:
+
+```{r}
+par(mfrow=c(1,2), oma = c(0, 0, 2, 0))
+plot(tree_cut, col=10, lwd=2)
+text(tree_cut, cex=1, label="yprob", font=2, digits = 2, pretty = 0)
+title(main="A pruned tree")
+```
+
+# Question 6
+
+Fit a random forest to the data, with 1000 trees, minimum node size of 25, using average probabilities rather than classifications (probability = TRUE).  
+
+**What is the most important variable according to this? Give the variable name.**
+
+```{r, cache=TRUE}
+telco_rf <- ranger(Churn ~ ., data = telco, 
+                   write.forest=TRUE, 
+                   num.trees = 1000, 
+                   min.node.size = 25, 
+                   importance = "impurity", 
+                   probability=TRUE, 
+                   seed = 19103)
+```
+
+**Variable Importance**:
+
+```{r}
+sort(telco_rf$variable.importance, decreasing = TRUE)
+```
+
+```{r}
+par(mfrow=c(1,1))
+par(mai=c(.9,.8,.2,.2))
+barplot(sort(telco_rf$variable.importance, decreasing = TRUE), ylab = "variable importance")
+
+```
+
+# Question 7
+
+Apply the most complex tree that you started with in question 4; also apply the pruned tree and the random forest to the [***holdout data***]{.underline} set.
+
+```{r}
+
+telco.holdout <- read.csv('telco_holdout.csv', stringsAsFactors = TRUE)
+
+# Churn as dummy
+Churn.num <- as.numeric(as.factor(telco.holdout$Churn))-1
+```
+
+**What is the area under the curve for the tree?**
+
+*Provide your answer with a dot and two decimals (e.g. 0.12)*
+
+Let's apply every model at once to the holdout:
+
+```{r}
+#take only "Yes"
+pred_cut <- predict(tree_cut, newdata=telco.holdout, type="vector")[,2]
+
+pred_complex <- predict(tree_complex, newdata=telco.holdout, type="vector")[,2]
+
+pred_rf <- predict(telco_rf, data=telco.holdout)$predictions[,2]
+
+# Observed churn as number
+churn.num <- as.numeric(telco.holdout$Churn)-1
+```
+
+[**Area Under the Curve**]{.underline}:
+
+```{r, warning=FALSE, message=FALSE}
+roc(churn.num, pred_cut)
+```
+
+```{r}
+par(mfrow=c(1,3))
+par(mai=c(.9,.8,.2,.2))
+plot(roc(as.numeric(telco.holdout$Churn)-1, pred_cut), print.auc=TRUE, ylim=c(0,1),
+     col="black", lwd=1, main="ROC curve", xlab="Specificity: true negative rate", ylab="Sensitivity: true positive rate", xlim=c(1,0))
+
+```
+
+# Question 8
+
+**What is the area under the curve for the random forest?**
+
+*Provide your answer with a dot and two decimals (e.g. 0.12)*
+
+```{r, warning=FALSE, message=FALSE}
+roc(churn.num, pred_rf)
+```
+
+# Question 9
+
+**What is the area under the curve for the complex tree?**
+
+*Provide your answer with a dot and two decimals (e.g. 0.12)*
+
+```{r, warning=FALSE, message=FALSE}
+round(roc(churn.num, pred_complex)$auc,2)
+```
+
+# Question 10
+
+Using the random forest in the holdout data, if you were targeting the top 3 deciles, **what percentage of total churners would you target?**
+
+*Provide your answer without a percent sign and with zero decimals (e.g. 12)*
+
+We start creating the deciles:
+
+```{r}
+ntiles <- function(x, bins) {
+  quantiles = seq(from=0, to = 1, length.out=bins+1)
+  cut(ecdf(x)(x),breaks=quantiles, labels=F)
+}
+
+# Deciles
+telco.holdout$prob <-pred_rf
+prob_decile <- ntiles(telco.holdout$prob, 10)
+
+# Churn as numeric:
+telco.holdout$Churn.num <- as.numeric(as.factor(telco.holdout$Churn))-1
+
+# Dataset:
+tbl <- data.frame(cbind(telco.holdout$prob, prob_decile, telco.holdout$Churn.num))
+colnames(tbl)<-c("predicted","decile", "actual")
+
+```
+
+Create lift table by decile
+
+```{r}
+# First: average churn rate by decile
+lift <- aggregate(actual~decile, data = tbl, mean)
+colnames(lift)[2]<-"actual churn rate"
+
+# lift is the actual churn rate in the decile divided by average overall churn rate
+lift[,3]<-lift[,2]/mean(telco.holdout$Churn.num)
+colnames(lift)[3]<-"lift"
+
+# order for highest to lowest
+lift<-lift[order(-lift$decile),]
+
+lift[,4]<-cumsum(lift$actual)/sum(lift$actual)*100
+colnames(lift)[4]<-"cumulative lift"
+
+lift %>% 
+  kbl() %>%
+  kable_styling()
+
+```

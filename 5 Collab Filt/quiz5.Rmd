@@ -1,0 +1,190 @@
+---
+title: "Quiz 5: Recomendation Systems"
+author: "Daniel Redel"
+date: "2023-01-25"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options("scipen"= 200, "digits"=3, width = 100)
+library(kableExtra)
+rm(list=ls())
+```
+
+# Question 1
+
+Let's use the [**content-based method**]{.underline} to make some recommendations. The last 5 things I watched on Netflix and their attributes were:
+
+```{r}
+row_names <- c("FUNNY", "ROMANTIC", "SUSPENSE", "DARK", "RATING")
+col_names <- c("SHARP OBJECTS", "ARRESTED DEV.", "ARBITRAGE", "MARGIN CALL", "BOJACK", "ORPHAN BLACK", "HINTERLAND")
+
+item <- matrix( c(0, 1, 0, 1, 1, 1, 0,
+                  1, 1, 0, 0, 1, 0, 0,
+                  1, 1, 1, 0, 1, 0, 1,
+                  1, 0, 1, 1, 0, 1, 1,
+                  4, 3, 4, 5, 3, NA, NA), byrow = TRUE, nrow = 5, ncol = 7,
+                dimnames = list(row_names, col_names))
+item %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+**How similar are my preferences to Orphan Black?** [***R: 0.36***]{.underline}
+
+Calculate the cosine similarity and report to 2 decimal points (e.g. 0.12)
+
+First, we normalize the ratings to the mean:
+
+```{r}
+rating <- matrix(c(4, 3, 4, 5, 3), nrow=1,ncol=5)
+rating_m <- rating-mean(rating)
+rating_m %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+We now estimate how much the ratings changes with attributes:
+
+```{r}
+user <- item[1:4,1:5] %*% t(rating_m)/rowSums(item[1:4,1:5])
+user %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+Finally, we take the similarity with respect to [**Orphan Black**]{.underline}:
+
+```{r}
+new_item <- item[1:4,6:7]
+
+CS <- t(new_item) %*% user / sqrt( colSums(new_item^2) )*sqrt( sum(user^2) )
+round(CS,2) %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+# Question 2
+
+**How similar are my preferences to Hinterland?** [***R: 0.21***]{.underline}
+
+*Calculate the cosine similarity and report to 2 decimal points (e.g. 0.12).*
+
+```{r}
+CS <- t(new_item) %*% user / sqrt( colSums(new_item^2) )*sqrt( sum(user^2) )
+CS %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+# Question 3
+
+**What should Netflix recommend to me, based on the content-based method?**
+
+```{r, echo=FALSE}
+cat("Orphan Black, because is closer to 1")
+```
+
+# Question 4
+
+Now, let's do the same exercise through the lens of collaborative filtering (on users, not items).
+
+```{r}
+row_names<-c("George", "Adam", "Ben", "Cam", "Dan")
+col_names<-c("Sharp Obj", "Arrested Dev", "Arbitrage", "Margin C", "Bojack", "Orphan B", "Hinterland")
+
+util <- matrix(c(4,3,4,5,3,NA,NA,
+                 4,3,4,4,3,NA,NA,
+                 3,4,3,1,3,5,NA,
+                 4,4,4,4,4,2,4,
+                 2,1,2,3,1,NA,3),
+               byrow = TRUE, nrow = 5, ncol = 7, 
+               dimnames=list(row_names,col_names))
+util %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+Imagine we want to again make a recommendation as to which movie George should see, based on his ratings and those of **Adam**, **Ben**, **Cam**, and **Dan**:
+
+**Who is most useful in predicting George's rating for Orphan Black?**
+
+We take the relevant users:
+
+```{r}
+m <- cor( t(util), use="pairwise.complete.obs")
+
+# The relevant row
+users_corr <- m[row=c("Adam","Ben","Cam", "Dan"), col=c("Adam")]
+users_corr %>% 
+  kbl() %>%
+  kable_styling()
+
+```
+
+We normalize the ratings:
+
+```{r}
+util_n <- util - rowMeans(util, na.rm=TRUE) #normalize
+
+# The Movies we care:
+movies_corr <- util_n[row=c("Adam","Ben","Cam", "Dan"), col=c("Orphan B", "Hinterland")]
+movies_corr %>% 
+  kbl() %>%
+  kable_styling()
+
+```
+
+```{r, echo=FALSE}
+cat("The most useful user for Orphan Black is Ben")
+```
+
+# Question 5
+
+**Who is most useful in predicting George's rating for Hinterland?**
+
+```{r}
+movies_corr %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+```{r, echo=FALSE}
+cat("The most useful user for Hinterland is Dan")
+```
+
+# Question 6
+
+**According to the collaborative filtering method, should Netflix better recommend Orphan Black or Hinterland?**
+
+Finally, we predict:
+
+```{r}
+predm <- users_corr * movies_corr
+predm %>% 
+  kbl() %>%
+  kable_styling()
+# Take the average
+pred <- colMeans(predm, na.rm=TRUE)
+pred %>% 
+  kbl() %>%
+  kable_styling()
+
+```
+
+```{r}
+predm<-m[row=c("Ben","Dan"),col=c("George")]*util_n[row=c("Ben","Dan"),col=c("Orphan B", "Hinterland")]
+predm %>% 
+  kbl() %>%
+  kable_styling()
+# Take the average
+pred <- colMeans(predm, na.rm=TRUE)
+pred %>% 
+  kbl() %>%
+  kable_styling()
+```

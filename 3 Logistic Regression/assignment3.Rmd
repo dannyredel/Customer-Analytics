@@ -1,0 +1,347 @@
+---
+title: "Assignment 3: Logistic Regression"
+author: "Daniel Redel"
+date: "2022-11-11"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+library(car)
+library(tidyverse)
+library(pROC)
+library(plotrix)  # plotting with confidence intervals
+library(tidyverse)
+library(kableExtra)
+options("scipen"=200, "digits"=4)
+
+library(readr)
+```
+
+A telecommunications company (like KPN) wants to implement a proactive churn policy, using logistic regression to predict churn. They assemble a data set of past customers who either churned or stayed, along with several variables that can be used to predict this decision. This data set is called *telco_test.csv*.
+
+```{r, message=FALSE, warning=FALSE}
+test <- read_csv("telco_test.csv")
+```
+
+Make sure all non-metric variables like gender, senior citizen, partner are coded as a factor (as done in the lab session) except for 3 variables --- tenure, monthly charges, and total charges. Use this code:
+
+```{r}
+test$gender <- as.factor(test$gender)
+test$PaymentMethod <- as.factor(test$PaymentMethod)
+
+# Change Churn from "no" "yes" to 0 1
+test <- test %>%
+mutate(Churn = ifelse(Churn == "No",0,1))
+```
+
+## Question 1
+
+Let's focus on the relationship between churn and payment method using just the data.
+
+**What is the proportion of churners of people who pay using a mailed check?**
+
+*Provide your answer with three decimals separated by a dot, not a comma (e.g. 0.123)*.
+
+```{r}
+mailed <- test %>% 
+  group_by(PaymentMethod) %>% 
+  summarise(n=n(), Churn = sum(Churn), p_churn = round(Churn/n,3))
+
+```
+
+```{r, echo=FALSE}
+cat("The proportion of churners of people who pay using a mailed check is", mailed$p_churn[4]) #0.186
+```
+
+## Question 2
+
+**What is the upper bound of the 95% confidence interval for the proportion of churners of people who pay using a mailed check?**
+
+*Provide your answer with three decimals separated by a dot, not a comma (e.g. 0.123)*.
+
+```{r}
+churn_pmethod <- test %>% 
+  group_by(PaymentMethod) %>% 
+  summarise(p_churn = mean(Churn), 
+            n_churners = sum(Churn), 
+            n=n(),
+            p_churn_se = sqrt((p_churn)*(1-p_churn)/n)) %>%
+  mutate(lower_CI_pchurn = p_churn - 1.96*p_churn_se, 
+         upper_CI_pchurn = p_churn + 1.96*p_churn_se) 
+
+churn_pmethod$upper_CI_pchurn[4] ## 0.209
+```
+
+Predict churn using gender, senior citizen, tenure (as a continuous variable), payment method, and the interaction between tenure and payment method. Call this **model 1**.
+
+```{r model0}
+# fit 
+model_1 <- glm(Churn ~ gender + SeniorCitizen + tenure*PaymentMethod, data=test, family = binomial(link="logit"))
+```
+
+## Question 3
+
+**What is the R2 of model 1?**
+
+*Provide your answer with three decimals separated by a dot, not a comma (e.g. 0.123)*.
+
+```{r}
+D <- model_1$deviance # get deviance D for each
+D0 <- model_1$null.deviance # D_0 is the same for all models
+  
+R2 <- 1-D/D0
+round(R2,3)
+```
+
+## Question 4
+
+According to **model 1**, a customer who pays by mailed check increases or decreases his or her likelihood of churn with each unit increase in tenure.
+
+**Report the odds for this customer**
+
+*Provide your answer with zero decimals without the percent sign (e.g. 120 or -120)*.
+
+```{r}
+coef1 <- round( (exp(coef(model_1)["tenure"] + coef(model_1)["tenure:PaymentMethodMailed check"])-1 )*100, 0)
+```
+
+```{r, echo=FALSE}
+cat("Odds Decreases", coef1,"%")
+```
+
+The odds of a customer who pays by mailed check and increase tenure by an unit vs "has a tenure of 1" are different.
+
+## Question 5
+
+**What is the K-fold cross validation estimate of R2?**
+
+Use K = 5, set the seed to 19103. Report the average of the values.
+
+*Provide your answer with two decimals separated by a dot, not a comma (e.g. 0.12)*.
+
+```{r, cache=TRUE}
+set.seed(19103)
+n = nrow(test)
+K = 5 # # folds
+foldid = rep(1:K, each=ceiling(n/K))[sample(1:n)]
+OOS <- data.frame(model1=rep(NA,K))
+
+
+## pred must be probabilities (0<pred<1) for binomial
+  deviance <- function(y, pred, family=c("gaussian","binomial")){
+    family <- match.arg(family)
+    if(family=="gaussian"){
+      return( sum( (y-pred)^2 ) )
+    }else{
+      if(is.factor(y)) y <- as.numeric(y)>1
+      return( -2*sum( y*log(pred) + (1-y)*log(1-pred) ) )
+    }
+  }
+
+## get null deviance too, and return R2
+  R2 <- function(y, pred, family=c("gaussian","binomial")){
+  fam <- match.arg(family)
+  if(fam=="binomial"){
+    if(is.factor(y)){ y <- as.numeric(y)>1 }
+  }
+  dev <- deviance(y, pred, family=fam)
+  dev0 <- deviance(y, mean(y), family=fam)
+  return(1-dev/dev0)
+  }  
+
+# this part will take several minutes, fitting 3 models K times each
+  
+for(k in 1:K){
+  train = which(foldid!=k) # data used to train
+  
+  # fit regressions
+  model_1 <- glm(Churn ~ gender + SeniorCitizen + tenure*PaymentMethod, data=test[train,], family = binomial(link="logit"))
+  
+  # predict on holdout data (-train)
+  pred1 <- predict(model_1, newdata=test[-train,], type = "response") ##TRAIN DATA not, the WHOLE SAMPLE
+  
+  # calculate R2
+  OOS$model1[k] <- R2(y = test$Churn[-train],pred=pred1, family="binomial")
+  
+  # print progress
+  cat(k, "  ")
+    
+}
+  
+```
+
+```{r, echo=FALSE}
+cat("Average of R2 is", round(mean(OOS$model1),2)  )
+```
+
+```{r}
+par(mai=c(.9,.8,.2,.2))  
+boxplot(OOS[,1], data=OOS, main=expression(paste("Out-of-Sample R"^"2")),
+        xlab="Model", ylab=expression(paste("R"^"2")))
+```
+
+Apply **model 1** to the holdout data set, *telco_holdout.csv*.
+
+```{r, message=FALSE, warning=FALSE}
+holdout_telco <- read_csv("telco_holdout.csv")
+
+## Dummes:
+holdout_telco$gender<-as.factor(holdout_telco$gender)
+holdout_telco$PaymentMethod<-as.factor(holdout_telco$PaymentMethod)
+
+# Change Churn from "no" "yes" to 0 1
+holdout_telco <- holdout_telco %>%
+  mutate(Churn = ifelse(Churn == "No",0,1))
+```
+
+Predicting Churning:
+
+```{r}
+# predicted x'beta part of 
+xb <- predict(model_1, type = "link", newdata=holdout_telco)
+# the predicted probability 
+prob <- predict(model_1, type = "response", newdata=holdout_telco)
+
+head(cbind(xb,prob)) %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+Plot:
+
+```{r}
+# first we arrange:
+ind <- order(prob)
+
+## PLOT
+par(mai=c(.9,.8,.2,.2))
+plot(xb[ind],holdout_telco$Churn[ind], pch=4,cex=0.3,col="blue", xlab="x'beta",ylab="P(Churn) on holdout data")
+lines(x=xb[ind], y=prob[ind], col="red", lwd=2)
+legend('left',legend=c("actual", "predicted (model 1)"),col=c("blue","red"), pch=c(1,NA),lty=c(NA,1), lwd=c(NA,2))
+```
+
+## Question 6
+
+**What is the hit rate (Sensitivity) as a whole percentage?**
+
+*Provide your answer with zero decimals without the percent sign (e.g. 120 or -120)*.
+
+[**Confusion Matrix**]{.underline}:
+
+```{r}
+confusion_matrix <- (table(holdout_telco$Churn, prob > 0.5))
+confusion_matrix <- as.data.frame.matrix(confusion_matrix)
+colnames(confusion_matrix) <- c("No", "Yes")
+confusion_matrix$Percentage_Correct <- confusion_matrix[1,]$No/(confusion_matrix[1,]$No+confusion_matrix[1,]$Yes)*100
+confusion_matrix[2,]$Percentage_Correct <- confusion_matrix[2,]$Yes/(confusion_matrix[2,]$No+confusion_matrix[2,]$Yes)*100
+
+print(confusion_matrix) %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+```{r, echo=FALSE}
+cat('Overall Percentage:', (round(confusion_matrix[2,2]/(confusion_matrix[2,2]+confusion_matrix[2,1])*100,0)), "%")
+```
+
+## Question 7
+
+**If you target the top 2 deciles using Model 1 in the holdout data, what percentage of total churners would you have?**
+
+*Provide your answer with zero decimals without the percent sign (e.g. 120 or -120)*.
+
+```{r}
+ntiles <- function(x, bins) {
+  quantiles = seq(from=0, to = 1, length.out=bins+1)
+  cut(ecdf(x)(x),breaks=quantiles, labels=F)
+}
+# create deciles
+prob_decile = ntiles(prob, 10)
+
+# prob, decile and actual
+pred <- data.frame(cbind(prob,prob_decile, holdout_telco$Churn))
+colnames(pred)<-c("predicted","decile", "actual")
+
+# create lift table by decile
+# average churn rate by decile
+
+# lift is the actual churn rate in the decile divided by average overall churn rate
+rbar_ho <- mean(holdout_telco$Churn)
+
+
+lift_table <- pred %>% 
+  group_by(decile) %>%  
+  summarize(actual_churn = mean(actual), lift = actual_churn/rbar_ho, n_customers=n()) %>% 
+  arrange(desc(decile)) %>% 
+  mutate(cum_customers=cumsum(n_customers)) %>%
+  mutate(cum_lift=cumsum(actual_churn)/sum(actual_churn)*100)
+
+```
+
+```{r}
+head(lift_table) %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+```{r, echo=FALSE}
+paste("Percentage of total churners:", round(lift_table$cum_lift[2],2), "%" ) ## Answer
+```
+
+-   The top decile lift is 2.516. Customers in the top decile are 2.516 times more likely to actually churn than the average customer.
+-   Targeting the top 20% using the model would give us 45% of total churners in the data.
+
+```{r}
+pred <- pred %>% 
+  arrange(desc(predicted)) %>% 
+  mutate(prop_churn = cumsum(actual)/sum(actual)*100, 
+         prop_cust = seq(nrow(pred))/nrow(pred)*100)
+```
+
+```{r}
+# Plotting percentage of churners as a function of percentage of customers
+par(mai=c(.9,.8,.2,.2))
+plot(pred$prop_cust, pred$prop_churn, 
+     type="l", xlab="% of customers targeted using model", ylab="% of churners accounted for", xlim = c(0,100), ylim = c(0,100), col="blue")
+legend('topleft', legend=c("Naive", "Logistic"), col=c("red", "blue"), lty=1:1, cex=0.8)
+abline(a=0,b=1,col="red")
+points(x=20, y= lift_table$cum_lift[2], pch=4, col="red",  cex=2, lwd=2)
+text(x = 27.75,y= lift_table$cum_lift[2]+0.5, paste(round(lift_table$cum_lift[2],2), "%" ))
+```
+
+## Question 8
+
+**How many deciles should you target to maximize expected profits, using the contact decision tree of Blattberg, Neslin and Kim?**
+
+Assume gamma = 0.1, LTV = 500, delta = 50, c = 0.50, psi = 1, and delta = 0.
+
+*Provide your answer (e.g. 0, 1, 2, ... 10)*.
+
+```{r}
+gamma = 0.1  # probability that customer is rescued if he or she is a churner
+LTV = 500   # lifetime value of rescued customer
+delta = 50  # cost of incentive
+c = 0.50  # cost of contact
+
+# re-order lift from highest to lowest
+# add columns to our lift table
+
+profit_table <- lift_table %>% 
+  mutate(cum_prop_churners = cumsum(actual_churn*n_customers)/cum_customers, 
+  profit = cum_customers*((gamma*LTV+delta*(1-gamma))*cum_prop_churners-delta-c),
+  decile=11-decile)
+```
+
+```{r, echo=FALSE}
+cat("percentile number", profit_table$decile[2], "with profits: $", profit_table$profit[2])
+```
+
+```{r}
+par(mai=c(.9,.8,.2,.2))
+bp <- barplot(profit_table$profit ~ profit_table$decile, main="expected profits by # of deciles targeted", xlab="# deciles targeted", ylab="expected profits")
+```

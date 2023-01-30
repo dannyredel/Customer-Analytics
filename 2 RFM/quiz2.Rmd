@@ -1,0 +1,319 @@
+---
+title: "Quiz 2: RFM Analysis"
+author: "Daniel Redel"
+date: "2023-01-24"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+
+library(tidyverse)
+library(data.table)
+library(kableExtra)
+library(gtools)
+library(VGAM)
+library(readr)
+```
+
+```{r, include=FALSE, warning=FALSE}
+ebeer_test <- read_csv("C:/Users/danny/OneDrive/Análisis Cuantitativo y Econometría/Marketing Analytics/Customer Analytics/Quizes/2 RFM/ebeer_test.csv")
+
+ebeer_rollout <- read_csv("C:/Users/danny/OneDrive/Análisis Cuantitativo y Econometría/Marketing Analytics/Customer Analytics/Quizes/2 RFM/ebeer_rollout.csv")
+```
+
+# Question 1
+
+A company is considering using RFM segments to target its rollout. The mailing under consideration costs €0.50 to send; if customers respond, they spend on average €50, of which €15 is margin.
+
+It conducted a test of customers in the file, [ebeer_test.csv](https://tilburguniversity.instructure.com/courses/10919/files/1948975?wrap=1); the customers not in the test can be found in [ebeer_rollout.csv](https://tilburguniversity.instructure.com/courses/10919/files/1948977?wrap=1). For this analysis, create 3 RFM groups (instead of 5 like we did in class). 
+
+**What is the average recency of the group that is most recent, i.e., the customers who purchased most recently?** 
+
+*Provide your answer with **one** decimal separated by a dot, not a comma (e.g. 0.1).*
+
+```{r}
+ebeer_test$Rgroup <- quantcut(ebeer_test$R, q = 3)
+```
+
+Alternatively:
+
+```{r}
+# Create Quantiles 
+ntiles <- function(x, bins) {
+  quantiles = seq(from=0, to = 1, length.out=bins+1)
+  cut(ecdf(x)(x), breaks = quantiles, labels=F)
+}
+ebeer_test$Rgroup <- ntiles(ebeer_test$R, bins=3)  
+```
+
+```{r, warning=FALSE}
+recency_stats <- ebeer_test %>% 
+  group_by(Rgroup) %>% 
+  summarise(n = n(), 
+            mean_R = mean(R), sd_R = sd(R), 
+            resp_p = mean(respmail, na.rm=TRUE))
+recency_stats %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+```{r, echo=FALSE}
+cat("The Average Recency of Group [2:10] is", round(recency_stats$mean_R[1],1) )
+```
+
+# Question 2
+
+**What is the response probability of that group?** 
+
+*Provide your answer with **two** decimals separated by a dot, not a comma (e.g. 0.17).*
+
+```{r, echo=FALSE}
+cat("The Response Rate of Group [2:10] is", round(recency_stats$resp_p[1],2) )
+```
+
+# Question 3
+
+Now do the full RFM analysis. 
+
+**How many RFM groups are there**?
+
+*Provide your answer with **zero** decimals (e.g. 17).*
+
+The Code:
+
+```{r}
+ntiles <- function(x, bins) {
+  quantiles = seq(from=0, to = 1, length.out=bins+1)
+  cut(ecdf(x)(x),breaks=quantiles, labels=F)
+}
+
+ebeer_test$Rgroup <- ntiles(ebeer_test$R, bins=3)  
+
+
+dt = data.table(ebeer_test)
+nbins = 3
+dt[, RFgroup := paste0(as.character(Rgroup), as.character(ntiles(F, bins = nbins))), by = c('Rgroup')]
+dt[, RFMgroup := paste0(as.character(RFgroup), as.character(ntiles(M, bins = nbins))), by = c('RFgroup')]
+
+# put it back to data.frame
+ebeer_test = data.frame(dt)
+
+# change it to a factor variable
+ebeer_test$RFMgroup<-as.factor(ebeer_test$RFMgroup)
+```
+
+**Number of RFM Groups:**
+
+```{r}
+length(unique(ebeer_test$RFMgroup))
+```
+
+# Question 4
+
+**How many of these segments are profitable to send to?** 
+
+*Provide your answer with **zero** decimals (e.g. 12).*
+
+Let's calculate the response rates for each segment:
+
+```{r, warning=FALSE}
+respRFM <- ebeer_test %>% 
+  group_by(RFMgroup) %>% 
+  summarise(n_resp= sum(respmail, na.rm = TRUE), 
+            n_mail= sum(mailing, na.rm = TRUE)) %>% 
+  mutate(resp_rate = n_resp/n_mail) %>% 
+  arrange(desc(resp_rate))
+head(respRFM) %>% 
+  kbl() %>%
+  kable_styling()
+```
+
+**Breakeven Point**:
+
+```{r}
+c <- 0.5
+m <- 15
+brk <- c/m
+```
+
+[**How many to target?**]{.underline}:
+
+```{r}
+sum(respRFM$resp_rate >= brk)
+```
+
+```{r}
+respRFM <- as.data.frame(respRFM)
+
+bp <- barplot(respRFM[,4], 
+              main="response by RFM group", 
+              xlab="RFM Group", ylab="average response", xaxt="n")
+axis(1, at = bp[,1], labels=respRFM[,1], cex.axis=0.7, las=2)
+
+abline(h=brk)
+text(85, brk, "breakeven", cex=1, pos=3, col="black")
+```
+
+# Question 5
+
+**What fraction of total variation in responses is explained by the RFM model?** 
+
+*Provide your answer with **three** decimals separated by a dot, not a comma (e.g. 0.127)*
+
+```{r}
+RFM_model <- lm(respmail ~ RFMgroup, data = ebeer_test)
+round(summary(RFM_model)$r.squared,3)
+```
+
+# Question 6
+
+**How many customers in the roll-out sample should be targeted?** 
+
+*Provide your answer with **zero** decimals (e.g. 12).*
+
+Let's consider now the roll-out data. We need first to *create the segments*:
+
+```{r}
+ntiles <- function(x, bins) {
+  quantiles = seq(from=0, to = 1, length.out=bins+1)
+  cut(ecdf(x)(x),breaks=quantiles, labels=F)
+}
+
+ebeer_rollout$Rgroup <- ntiles(ebeer_rollout$R, bins=3)  
+
+
+dt = data.table(ebeer_rollout)
+nbins = 3
+dt[, RFgroup := paste0(as.character(Rgroup), as.character(ntiles(F, bins = nbins))), by = c('Rgroup')]
+dt[, RFMgroup := paste0(as.character(RFgroup), as.character(ntiles(M, bins = nbins))), by = c('RFgroup')]
+
+# put it back to data.frame
+ebeer_rollout = data.frame(dt)
+
+# change it to a factor variable
+ebeer_rollout$RFMgroup<-as.factor(ebeer_rollout$RFMgroup)
+```
+
+We want to *predict their response rates*:
+
+```{r}
+ebeer_rollout$RFMpred <- predict(RFM_model, ebeer_rollout)
+sum(ebeer_rollout$RFMpred >= brk)
+```
+
+```{r}
+rollout_respRFM <- ebeer_rollout %>% 
+  group_by(RFMgroup) %>% 
+  summarise(n_resp= sum(respmail, na.rm = TRUE), 
+            n_mail= sum(mailing, na.rm = TRUE)) %>% 
+  mutate(resp_rate = n_resp/n_mail) %>% 
+  arrange(desc(resp_rate))
+```
+
+```{r}
+rollout_respRFM <- as.data.frame(rollout_respRFM)
+
+bp <- barplot(rollout_respRFM[,4], 
+              main="response by RFM group", 
+              xlab="RFM Group", ylab="average response", xaxt="n")
+axis(1, at = bp[,1], labels=rollout_respRFM[,1], cex.axis=0.7, las=2)
+
+abline(h=brk)
+text(85, brk, "breakeven", cex=1, pos=3, col="black")
+```
+
+# Question 7
+
+**What is the return on investment of rolling out to those segments?** 
+
+*Provide your answer with **zero** decimals **without** the percent sign (e.g. 120).*
+
+**Profit per Consumer**:
+
+```{r}
+ebeer_rollout <- ebeer_rollout %>% 
+	mutate(RFMprofit = case_when(RFMpred >= brk ~ RFMpred*m-c, TRUE ~ 0))
+```
+
+**Sum of Profits**:
+
+```{r}
+sum_profit <- sum(ebeer_rollout$RFMprofit)
+sum_profit
+```
+
+**Costs per Consumer**:
+
+```{r}
+ebeer_rollout <- ebeer_rollout %>% 
+	mutate(RFMcost = case_when(RFMpred >= brk ~ c, TRUE ~ 0))
+```
+
+**Sum of Costs**:
+
+```{r}
+sum_cost <- sum(ebeer_rollout$RFMcost)
+sum_cost 
+```
+
+**ROI**:
+
+```{r, echo=FALSE}
+cat("The ROI is", round(sum_profit / sum_cost*100, 0), "%")
+```
+
+# Question 8
+
+Use a beta-binomial model to shrink the segment estimates in the test data.  
+
+**How many extra segments would you target using this method that you wouldn't otherwise target?**
+
+*Provide your answer with **zero** decimals (e.g. 12).*
+
+First, we need the non-response data:
+
+```{r}
+respRFM <- respRFM %>% 
+  mutate(n_nonresp = n_mail-n_resp) %>% 
+  relocate(n_nonresp, .after=n_resp)
+```
+
+Likelihood Function to fit the data and find **prior response rate**:
+
+```{r}
+fit <- vglm(cbind(respRFM$n_resp,respRFM$n_nonresp) ~ 1, betabinomialff, trace=TRUE)
+a <- Coef(fit)[[1]]
+b <- Coef(fit)[[2]]
+```
+
+```{r, echo=FALSE}
+cat("(a,b)=(",a,",", b, ")")
+```
+
+We know can estimate the posterior response rates:
+
+```{r}
+post_mean_resp <- (a+respRFM$n_resp)/(a+b+respRFM$n_mail)
+respRFM <- cbind(respRFM, post_mean_resp)
+```
+
+```{r}
+plot(respRFM$resp_rate, xaxt="n",col="red",xlab="RFM segments",ylab="response rate and posterior mean response rate")
+points(respRFM$post_mean_resp, col='blue')
+legend('topleft',legend=c("estimate response rate", "posterior expected response rate"),col=c("red","blue"), pch=1)
+axis(1, at = 1:27, labels=respRFM$RFMgroup, cex.axis=0.7, las=2)
+abline(h=brk)
+text(25, brk, "breakeven", cex=1, pos=3, col="black")
+```
+
+In the end, ***how many extra segments should we target?***
+
+```{r}
+sum(respRFM$post_mean_resp >= brk) - sum(respRFM$resp_rate >= brk)
+```
