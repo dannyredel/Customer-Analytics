@@ -1,4 +1,4 @@
-# Customer-Analytics
+# [Customer-Analytics](https://preeminent-torte-37ddf4.netlify.app/)
 This website [here](https://preeminent-torte-37ddf4.netlify.app/ ) hosts all the assignments and quizzes I did during the course “Customer Analytics” taught at Tilburg University (2022).
 
 Customer analytics means combining statistical models to predict customer behavior with simple economic models to derive optimal managerial policies. We look at predicting behavior from the level of the individual customer, as in true one-to-one marketing, scaled up to a firm’s entire customer base.
